@@ -91,9 +91,9 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
     await db.from("budget_history").insert({ campaign_id: campaign.id, daily_budget_cents: campaign.daily_budget_cents, actor: env.APPROVER_NAME });
   }
 
-  // 3. Ad sets
-  const optimization_goal = campaign.objective === "OUTCOME_LEADS" ? (brand.pixel_id ? "OFFSITE_CONVERSIONS" : "LANDING_PAGE_VIEWS") : "LINK_CLICKS";
-  const promoted_object = campaign.objective === "OUTCOME_LEADS" && brand.pixel_id ? { pixel_id: brand.pixel_id, custom_event_type: brand.lead_event ?? "LEAD" } : undefined;
+  // 3. Ad sets. Leads objective needs a pixel and a lead event; without them
+  // the brand must run OUTCOME_TRAFFIC (landing page views when a pixel exists).
+  const { optimization_goal, promoted_object } = optimisationFor(campaign.objective, brand);
   for (const s of adsets) {
     if (s.meta_adset_id) continue;
     const targeting = await resolveTargeting(ctx, s.targeting_json);
@@ -184,6 +184,24 @@ async function resolveTargeting(ctx: Ctx, t: Record<string, unknown>): Promise<T
   }
   if (interests.length) targeting.flexible_spec = [{ interests }];
   return targeting;
+}
+
+const STANDARD_EVENTS = new Set(["LEAD", "COMPLETE_REGISTRATION", "CONTACT", "SCHEDULE", "SUBMIT_APPLICATION", "SUBSCRIBE", "PURCHASE", "START_TRIAL"]);
+
+export function optimisationFor(
+  objective: "OUTCOME_LEADS" | "OUTCOME_TRAFFIC",
+  brand: Pick<Brand, "slug" | "pixel_id" | "lead_event">,
+): { optimization_goal: "OFFSITE_CONVERSIONS" | "LINK_CLICKS" | "LANDING_PAGE_VIEWS"; promoted_object?: Record<string, string> } {
+  if (objective === "OUTCOME_TRAFFIC") {
+    return { optimization_goal: brand.pixel_id ? "LANDING_PAGE_VIEWS" : "LINK_CLICKS", promoted_object: brand.pixel_id ? { pixel_id: brand.pixel_id } : undefined };
+  }
+  if (!brand.pixel_id || !brand.lead_event) {
+    throw new Error(`Brand ${brand.slug} has no pixel or lead event configured. Set both, or run this brand with OUTCOME_TRAFFIC (landing page views) until the lead event exists.`);
+  }
+  const ev = brand.lead_event.trim();
+  const upper = ev.toUpperCase().replace(/\s+/g, "_");
+  const promoted_object = STANDARD_EVENTS.has(upper) ? { pixel_id: brand.pixel_id, custom_event_type: upper } : { pixel_id: brand.pixel_id, custom_event_type: "OTHER", custom_event_str: ev };
+  return { optimization_goal: "OFFSITE_CONVERSIONS", promoted_object };
 }
 
 export async function discardCampaign(ctx: Ctx, campaignId: string, actor: string): Promise<void> {

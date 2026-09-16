@@ -58,6 +58,7 @@ export async function runBrief(ctx: Ctx, input: Brief): Promise<Campaign> {
 
   // 5.2 strategy
   const strategy = await ctx.ai.strategy(brand, brief, landingText, summariseQueue(queue));
+  strategy.objective = objective; // the brief decides the objective, Claude only recommends
 
   // Budget: Claude recommends, rules clamp (section 7.3). Even split over duration, then clamp to headroom.
   const evenDaily = Math.floor(total_budget_cents / input.duration_days);

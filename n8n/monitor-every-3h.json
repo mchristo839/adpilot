@@ -75,18 +75,16 @@
     },
     {
       "parameters": {
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "mode": "name",
-          "value": "#adpilot"
-        },
-        "text": "=AdPilot monitor{{ $json.dry_run ? ' [DRY RUN]' : '' }}:\n{{ $json.results.flatMap(r => r.actions.filter(a => a.severity !== 'info').map(a => `${r.brand}: ${a.rule} ${a.action} ${a.entity_id} - ${a.reason}`)).join('\\n') }}",
-        "otherOptions": {}
+        "fromEmail": "={{ $vars.ADPILOT_EMAIL_FROM }}",
+        "toEmail": "={{ $vars.ADPILOT_EMAIL_TO }}",
+        "subject": "=AdPilot rule triggered{{ $json.dry_run ? ' [DRY RUN]' : '' }}",
+        "emailFormat": "text",
+        "text": "={{ $json.results.flatMap(r => r.actions.filter(a => a.severity !== 'info').map(a => `${r.brand}: ${a.rule} ${a.action} ${a.entity_id} - ${a.reason}`)).join('\\n') }}",
+        "options": {}
       },
-      "name": "Slack alert",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
+      "name": "Email alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [
         800,
         300
@@ -121,7 +119,7 @@
       "main": [
         [
           {
-            "node": "Slack alert",
+            "node": "Email alert",
             "type": "main",
             "index": 0
           }

@@ -36,7 +36,7 @@ n8n/               workflow exports: monitor cron, daily summary, notify fan-out
 6. `pnpm seed-brands` inserts CallCrewHQ, ClearCyprus and GreaseTrapQuotes as inactive. Meta ids come from env (`CALLCREWHQ_AD_ACCOUNT_ID` and so on, see the script header).
 7. `pnpm test` runs the rule tests.
 8. `pnpm dev:worker` and `pnpm dev:dashboard`. Or `docker compose up -d` for the worker on the VPS.
-9. Import the `n8n/*.json` workflows, set the `ADPILOT_WORKER_URL` and `ADPILOT_API_KEY` variables, and put the notify webhook URL into `N8N_NOTIFY_WEBHOOK_URL`.
+9. Import the `n8n/*.json` workflows, set the `ADPILOT_WORKER_URL`, `ADPILOT_API_KEY`, `ADPILOT_EMAIL_TO` and `ADPILOT_EMAIL_FROM` variables, attach an SMTP credential, and put the notify webhook URL into `N8N_NOTIFY_WEBHOOK_URL`.
 10. Activate a brand from the dashboard Brands page when its ids are real and verify-meta passes.
 
 ## Core workflow
@@ -44,7 +44,7 @@ n8n/               workflow exports: monitor cron, daily summary, notify fan-out
 1. **Brief in**: dashboard form, `POST /brief`, or the n8n brief webhook (weekly per brand).
 2. **Strategy**: one Claude call with brand config, stripped landing page and any queued Airtable concepts. Strict JSON. Claude recommends a budget; the rules clamp it.
 3. **Creatives**: three primary texts, two headlines, a description, a CTA and an image spec per creative. Images render with Playwright from `templates/<brand>/*.html` at 1080x1080 and 1080x1920, or via fal.ai plus the brand's `photo-overlay.html`. Stored with status `draft`. Nothing is uploaded yet.
-4. **Approval**: Slack or email link to the dashboard. Approve, reject, regenerate copy or image per creative. Then "Approve and launch".
+4. **Approval**: email with a link to the dashboard. Approve, reject, regenerate copy or image per creative. Then "Approve and launch".
 5. **Publish** (idempotent, each step logged): upload images, create campaign (PAUSED, CBO daily budget in cents), ad sets per angle, creatives with UTM links, ads. Validation read, then flip everything to ACTIVE. Any failure leaves everything PAUSED and notifies.
 6. **Monitor** every 3 hours via `GET /monitor`: insights snapshots, spend ledger, rules, creative rotation. Daily summary at 08:00 Cyprus time via `GET /report/daily`.
 
@@ -58,12 +58,12 @@ n8n/               workflow exports: monitor cron, daily summary, notify fan-out
 | 4 | Automated increases max 20 percent per 24h, never above daily cap | `clampBudgetChange` |
 | 5 | CPA guard: 3-day CPA above max with 5+ results, or 3x max CPA with zero results | `checkCpaGuard` in the monitor |
 | 6 | Runaway: today's spend above 1.5x daily budget pauses the campaign | `checkRunaway`, first rule in the monitor |
-| 7 | Kill switch: `POST /kill {brand:"all"}` pauses everything in one request | `planKill`, dashboard button, Slack `/adkill` |
+| 7 | Kill switch: `POST /kill {brand:"all"}` pauses everything in one request | `planKill`, dashboard button, optional Slack `/adkill` |
 | 8 | Approval required for launches and increases; automation only pauses or reduces | `assertApproved`, `clampBudgetChange` |
 | 9 | Token scope check on boot | `checkTokenScopes`, `MetaClient.assertWriteScopes` |
 | 10 | Dry run default on | `isDryRun`, `MetaClient.write` |
 
-Seed caps (confirm before going live): CallCrewHQ USD 15/day, 300/month, max CPA 40. ClearCyprus EUR 15/day, 300/month, max CPA 15. GreaseTrapQuotes AUD 10/day, 200/month, max CPA 1.50 per click.
+Seed caps: CallCrewHQ USD 15/day, 300/month, CPA guard off until a lead event exists (it runs OUTCOME_TRAFFIC with landing page views for now). ClearCyprus EUR 15/day, 300/month, max CPA 15. GreaseTrapQuotes AUD 10/day, 200/month, max CPA 1.50 per click.
 
 ## API (worker, header `x-api-key`)
 

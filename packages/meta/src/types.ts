@@ -103,7 +103,7 @@ export interface CreateAdsetInput {
   start_time?: string;
   end_time?: string;
   status?: MetaStatus;
-  promoted_object?: { pixel_id: string; custom_event_type: string } | undefined;
+  promoted_object?: Record<string, string> | undefined;
   bid_strategy?: "LOWEST_COST_WITHOUT_CAP";
 }
 

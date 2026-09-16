@@ -24,8 +24,11 @@ const brands = [
     name: "CallCrewHQ",
     slug: "callcrewhq",
     ...ids("CALLCREWHQ"),
-    lead_event: "Lead",
-    default_objective: "OUTCOME_LEADS",
+    // No working lead event yet (confirmed). v1 optimises for landing page
+    // views under OUTCOME_TRAFFIC. Switch to OUTCOME_LEADS and set lead_event
+    // once the demo-booked pixel event fires.
+    lead_event: null,
+    default_objective: "OUTCOME_TRAFFIC",
     landing_urls: ["https://callcrewhq.com"],
     audience_notes:
       "US home service trades: plumbing, HVAC, roofing, electrical. Target owners and office managers of trade businesses with 2 to 30 staff who miss calls while on jobs. Pain: missed calls become lost jobs. Offer: AI receptionist that answers every call and books the job. Goal: demo bookings.",
@@ -37,7 +40,9 @@ const brands = [
     },
     monthly_cap_cents: toCents(300),
     daily_cap_cents: toCents(15),
-    max_cpa_cents: toCents(40),
+    // 40 USD per demo booked only makes sense on the leads objective. Under
+    // traffic the CPA guard would measure clicks, so it stays off until then.
+    max_cpa_cents: null,
     currency: "USD",
     timezone: "America/New_York",
   },

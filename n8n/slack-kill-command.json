@@ -1,5 +1,5 @@
 {
-  "name": "AdPilot Slack /adkill",
+  "name": "AdPilot Slack /adkill (optional)",
   "nodes": [
     {
       "parameters": {
