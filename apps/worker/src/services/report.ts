@@ -1,0 +1,115 @@
+import { must, type Brand, type Campaign, type Creative } from "@adpilot/db";
+import { localDate } from "@adpilot/rules";
+import type { Ctx } from "../context.js";
+import { activeBrands, brandByIdOrSlug } from "./brands.js";
+import { notify } from "./notify.js";
+
+export interface DailySummary {
+  brand: string;
+  currency: string;
+  date: string;
+  spend_yesterday_cents: number;
+  spend_mtd_cents: number;
+  monthly_cap_cents: number;
+  cap_utilisation: number;
+  daily_cap_cents: number;
+  active_daily_budget_cents: number;
+  best_creative: CreativeLine | null;
+  worst_creative: CreativeLine | null;
+  rule_triggers: { run_at: string; actor: string; action: string; entity_id: string | null; reason?: string }[];
+  dry_run: boolean;
+}
+
+interface CreativeLine {
+  creative_id: string | null;
+  ad_id: string;
+  headline: string | null;
+  spend_cents: number;
+  results: number;
+  cost_per_result_cents: number | null;
+}
+
+/** 5.6 step 5: daily summary payload per brand. n8n renders and sends it at 08:00 Cyprus time. */
+export async function dailySummary(ctx: Ctx, brandRef: string, now = new Date()): Promise<DailySummary> {
+  const brand = await brandByIdOrSlug(ctx.db, brandRef);
+  return summaryForBrand(ctx, brand, now);
+}
+
+export async function dailySummaries(ctx: Ctx, now = new Date()): Promise<DailySummary[]> {
+  const brands = await activeBrands(ctx.db);
+  return Promise.all(brands.map((b) => summaryForBrand(ctx, b, now)));
+}
+
+async function summaryForBrand(ctx: Ctx, brand: Brand, now: Date): Promise<DailySummary> {
+  const { db } = ctx;
+  const today = localDate(now, brand.timezone);
+  const yesterday = localDate(new Date(now.getTime() - 86400000), brand.timezone);
+  const monthStart = `${today.slice(0, 7)}-01`;
+
+  const ledger = must(await db.from("spend_ledger").select("date,spend_cents").eq("brand_id", brand.id).gte("date", monthStart).lte("date", today), "ledger") as { date: string; spend_cents: number }[];
+  const spend_yesterday_cents = ledger.find((r) => r.date === yesterday)?.spend_cents ?? 0;
+  const spend_mtd_cents = ledger.reduce((s, r) => s + r.spend_cents, 0);
+
+  const campaigns = must(await db.from("campaigns").select("*").eq("brand_id", brand.id).eq("status", "ACTIVE"), "campaigns") as Campaign[];
+  const active_daily_budget_cents = campaigns.reduce((s, c) => s + c.daily_budget_cents, 0);
+
+  // Best and worst creative from the latest last_7d snapshot per ad
+  const since = new Date(now.getTime() - 4 * 3600 * 1000).toISOString();
+  const snaps = must(
+    await db.from("insights_snapshots").select("ad_id,spend_cents,results,clicks,run_at,campaign_id").eq("brand_id", brand.id).eq("date_preset", "last_7d").gte("run_at", since).order("run_at", { ascending: false }),
+    "snapshots",
+  ) as { ad_id: string; spend_cents: number; results: number; clicks: number; run_at: string; campaign_id: string | null }[];
+  const latest = new Map<string, (typeof snaps)[number]>();
+  for (const s of snaps) if (!latest.has(s.ad_id)) latest.set(s.ad_id, s);
+  const adIds = [...latest.keys()];
+  const creatives = adIds.length ? (must(await db.from("creatives").select("id,meta_ad_id,headline").in("meta_ad_id", adIds), "creatives") as Pick<Creative, "id" | "meta_ad_id" | "headline">[]) : [];
+  const lines: CreativeLine[] = [...latest.values()]
+    .filter((s) => s.spend_cents > 0)
+    .map((s) => {
+      const c = creatives.find((x) => x.meta_ad_id === s.ad_id);
+      const denom = brand.default_objective === "OUTCOME_LEADS" ? s.results : s.clicks;
+      return { creative_id: c?.id ?? null, ad_id: s.ad_id, headline: c?.headline ?? null, spend_cents: s.spend_cents, results: denom, cost_per_result_cents: denom > 0 ? Math.round(s.spend_cents / denom) : null };
+    });
+  const ranked = lines.sort((a, b) => (a.cost_per_result_cents ?? Infinity) - (b.cost_per_result_cents ?? Infinity));
+
+  const triggers = must(
+    await db.from("audit_log").select("run_at,actor,action,entity_id,after_json").gte("run_at", new Date(now.getTime() - 86400000).toISOString()).in("action", ["pause", "notify", "kill_switch", "pause.untracked"]).order("run_at", { ascending: false }).limit(20),
+    "audit",
+  ) as { run_at: string; actor: string; action: string; entity_id: string | null; after_json: { reason?: string } | null }[];
+
+  return {
+    brand: brand.slug,
+    currency: brand.currency,
+    date: today,
+    spend_yesterday_cents,
+    spend_mtd_cents,
+    monthly_cap_cents: brand.monthly_cap_cents,
+    cap_utilisation: brand.monthly_cap_cents ? spend_mtd_cents / brand.monthly_cap_cents : 0,
+    daily_cap_cents: brand.daily_cap_cents,
+    active_daily_budget_cents,
+    best_creative: ranked[0] ?? null,
+    worst_creative: ranked.length > 1 ? ranked[ranked.length - 1]! : null,
+    rule_triggers: triggers.filter((t) => t.actor !== "system").map((t) => ({ run_at: t.run_at, actor: t.actor, action: t.action, entity_id: t.entity_id, reason: t.after_json?.reason })),
+    dry_run: ctx.dryRun,
+  };
+}
+
+export function formatSummary(s: DailySummary): string {
+  const m = (c: number) => `${(c / 100).toFixed(2)} ${s.currency}`;
+  const lines = [
+    `${s.dry_run ? "[DRY RUN] " : ""}${s.brand} daily summary for ${s.date}`,
+    `Spend yesterday: ${m(s.spend_yesterday_cents)}`,
+    `Month to date: ${m(s.spend_mtd_cents)} of ${m(s.monthly_cap_cents)} cap (${(s.cap_utilisation * 100).toFixed(0)}%)`,
+    `Active daily budget: ${m(s.active_daily_budget_cents)} of ${m(s.daily_cap_cents)} daily cap`,
+  ];
+  if (s.best_creative) lines.push(`Best: "${s.best_creative.headline ?? s.best_creative.ad_id}" at ${s.best_creative.cost_per_result_cents ? m(s.best_creative.cost_per_result_cents) : "n/a"} per result`);
+  if (s.worst_creative) lines.push(`Worst: "${s.worst_creative.headline ?? s.worst_creative.ad_id}" at ${s.worst_creative.cost_per_result_cents ? m(s.worst_creative.cost_per_result_cents) : "n/a"} per result`);
+  lines.push(s.rule_triggers.length ? `Rule triggers (24h): ${s.rule_triggers.map((t) => `${t.actor} ${t.action}${t.reason ? ` (${t.reason})` : ""}`).join("; ")}` : "Rule triggers (24h): none");
+  return lines.join("\n");
+}
+
+export async function sendDailySummaries(ctx: Ctx): Promise<DailySummary[]> {
+  const all = await dailySummaries(ctx);
+  for (const s of all) await notify({ kind: "daily_summary", brand: s.brand, title: `${s.brand} daily summary`, body: formatSummary(s), data: s });
+  return all;
+}

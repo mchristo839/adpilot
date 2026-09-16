@@ -1,0 +1,25 @@
+{
+  "name": "adpilot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-driven Meta ads automation with hard budget control",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/*' --filter './apps/worker' run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:worker": "pnpm --filter @adpilot/worker dev",
+    "dev:dashboard": "pnpm --filter @adpilot/dashboard dev",
+    "verify-meta": "tsx scripts/verify-meta.ts",
+    "seed-brands": "tsx scripts/seed-brands.ts",
+    "add-brand": "tsx scripts/add-brand.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "name": "AdPilot daily summary 08:00 Cyprus",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "name": "08:00 Cyprus",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.ADPILOT_WORKER_URL }}/report/daily",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $vars.ADPILOT_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "name": "GET /report/daily",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "",
+        "options": {}
+      },
+      "name": "One item per brand",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#adpilot"
+        },
+        "text": "={{ ($json.dry_run ? '[DRY RUN] ' : '') + $json.brand + ' daily summary ' + $json.date + '\\nSpend yesterday: ' + ($json.spend_yesterday_cents/100).toFixed(2) + ' ' + $json.currency + '\\nMonth to date: ' + ($json.spend_mtd_cents/100).toFixed(2) + ' of ' + ($json.monthly_cap_cents/100).toFixed(2) + ' (' + Math.round($json.cap_utilisation*100) + '%)\\nBest: ' + ($json.best_creative ? $json.best_creative.headline + ' @ ' + ($json.best_creative.cost_per_result_cents/100).toFixed(2) : 'n/a') + '\\nWorst: ' + ($json.worst_creative ? $json.worst_creative.headline + ' @ ' + ($json.worst_creative.cost_per_result_cents/100).toFixed(2) : 'n/a') + '\\nRule triggers: ' + ($json.rule_triggers.length ? $json.rule_triggers.map(t => t.actor + ' ' + t.action).join(', ') : 'none') }}",
+        "otherOptions": {}
+      },
+      "name": "Slack summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "08:00 Cyprus": {
+      "main": [
+        [
+          {
+            "node": "GET /report/daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /report/daily": {
+      "main": [
+        [
+          {
+            "node": "One item per brand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per brand": {
+      "main": [
+        [
+          {
+            "node": "Slack summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Nicosia"
+  },
+  "active": false
+}

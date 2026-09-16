@@ -1,0 +1,22 @@
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: adpilot-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STORAGE_DIR: /data/storage
+    volumes:
+      - adpilot-storage:/data/storage
+    ports:
+      - "127.0.0.1:8787:8787"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  adpilot-storage:

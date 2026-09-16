@@ -1,0 +1,137 @@
+{
+  "name": "AdPilot monitor every 3h",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */3 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Every 3h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.ADPILOT_WORKER_URL }}/monitor",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $vars.ADPILOT_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "name": "GET /monitor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.results.flatMap(r => r.actions).filter(a => a.severity !== 'info').length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Any triggers?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#adpilot"
+        },
+        "text": "=AdPilot monitor{{ $json.dry_run ? ' [DRY RUN]' : '' }}:\n{{ $json.results.flatMap(r => r.actions.filter(a => a.severity !== 'info').map(a => `${r.brand}: ${a.rule} ${a.action} ${a.entity_id} - ${a.reason}`)).join('\\n') }}",
+        "otherOptions": {}
+      },
+      "name": "Slack alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "Every 3h": {
+      "main": [
+        [
+          {
+            "node": "GET /monitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /monitor": {
+      "main": [
+        [
+          {
+            "node": "Any triggers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any triggers?": {
+      "main": [
+        [
+          {
+            "node": "Slack alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

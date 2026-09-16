@@ -1,0 +1,57 @@
+{
+  "name": "AdPilot notify fan-out",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adpilot-notify",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#adpilot"
+        },
+        "text": "={{ ($json.body.severity === 'critical' ? ':rotating_light: ' : '') + '[' + $json.body.kind + '] ' + $json.body.title + '\\n' + $json.body.body + ($json.body.link ? '\\n' + $json.body.link : '') }}",
+        "otherOptions": {}
+      },
+      "name": "Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
