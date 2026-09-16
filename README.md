@@ -28,6 +28,8 @@ n8n/               workflow exports: monitor cron, daily summary, notify fan-out
 
 ## Setup
 
+New here? Read `docs/GETTING_STARTED.md` first. It lists what is already provisioned (Supabase schema, n8n workflows) and the exact steps left.
+
 1. **Meta** (section 4 of the spec). Create a Business app, add Marketing API, create an admin System User, assign all ad accounts and pages, generate a token with `ads_management, ads_read, business_management, pages_read_engagement, pages_manage_ads, instagram_basic`. Set an account-level `spend_cap` in Ads Manager on every account. The code reads it and never writes it.
 2. Copy `.env.example` to `.env` and fill in the values.
 3. `pnpm install`

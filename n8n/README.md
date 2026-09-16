@@ -1,5 +1,7 @@
 # n8n workflows
 
+These four workflows already exist on n8n.utomat.com (created from this spec, using the Gmail credential). The JSON files here are a backup for re-import. Live ids: monitor `WQxlhrdg66XUcxAg`, daily summary `rhLRzA5iZcXD0rWo`, notify `BGFBxroJkmoFOKRc` (published), brief `i7EdkHwH5iSn4LGO`.
+
 Import these JSON files into n8n (n8n.courseadvisor.ai). Approvals, alerts and summaries go by email. Set these n8n variables:
 
 - `ADPILOT_WORKER_URL` (e.g. `https://adpilot.internal:8787`)
