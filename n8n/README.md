@@ -17,6 +17,7 @@ Attach an SMTP credential to every "Email" node after import.
 | `daily-summary-0800-cyprus.json` | Cron `0 8 * * *` in `Asia/Nicosia` | `GET /report/daily`, one email per brand |
 | `notify-webhook.json` | Webhook `POST /webhook/adpilot-notify` | Emails worker notifications (approval needed, rule triggered, publish failed, kill). Put its URL in `N8N_NOTIFY_WEBHOOK_URL` |
 | `slack-kill-command.json` | Webhook `POST /webhook/adpilot-kill` (Slack slash command `/adkill`) | Optional. Calls `POST /kill` with `brand=all` or the slash command argument. The dashboard button is the primary kill switch |
+| (live only) AdPilot weekly briefs | Schedule Monday 09:00 Cyprus | `GET /brands`, then `POST /brief` per active brand with 7 x daily cap as the run budget |
 | `brief-webhook.json` | Webhook `POST /webhook/adpilot-brief` | Forwards a brief JSON to `POST /brief` (use for weekly scheduled briefs) |
 
 Test the kill switch monthly from the dashboard button (or `/adkill` if you wire the Slack command).
