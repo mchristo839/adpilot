@@ -13,8 +13,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <a href="/">Campaigns</a>
             <a href="/brands">Brands</a>
             <a href="/brief">New brief</a>
+            <a href="/reports">Reports</a>
           </nav>
-          <KillButton />
+          <div className="row">
+            <form action="/logout" method="post"><button className="small" type="submit">Log out</button></form>
+            <KillButton />
+          </div>
         </header>
         <main>{children}</main>
       </body>

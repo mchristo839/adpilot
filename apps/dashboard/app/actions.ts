@@ -39,6 +39,7 @@ export async function createBrief(form: FormData) {
     duration_days: Number(form.get("duration_days") ?? 7),
     total_budget: Number(form.get("total_budget")),
   };
+  // Worker answers 202 right away; the campaign page refreshes itself while it generates.
   const c = await api<{ id: string }>("/brief", { method: "POST", body: JSON.stringify(body) });
   revalidatePath("/");
   return c.id;
@@ -72,4 +73,9 @@ export async function saveBrand(id: string | null, form: FormData) {
     await api(`/brands`, { method: "POST", body: JSON.stringify(body) });
   }
   revalidatePath("/brands");
+}
+
+export async function retryGeneration(campaignId: string) {
+  await api(`/campaigns/${campaignId}/generate`, { method: "POST" });
+  revalidatePath(`/campaigns/${campaignId}`);
 }

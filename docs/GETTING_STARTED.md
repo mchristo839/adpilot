@@ -34,6 +34,7 @@ Copy `.env.example` to `.env` on the machine that runs the worker and fill:
 | `FAL_KEY` | fal.ai dashboard (only needed for photo creatives, template creatives work without it) |
 | `AIRTABLE_TOKEN` | airtable.com/create/tokens with read scope on base `appZxzHV1ywNbLKtS` (ClearCyprus creative queue) |
 | `WORKER_API_KEY` | make one up: `openssl rand -hex 24`. n8n and the dashboard send it as `x-api-key` |
+| `ALLOWED_APPROVERS` | `mario,mario@utomat.com` (the dashboard login email must be in here) |
 | `N8N_NOTIFY_WEBHOOK_URL` | already filled: `https://n8n.utomat.com/webhook/adpilot-notify` |
 | `DASHBOARD_URL`, `STORAGE_PUBLIC_URL` | your dashboard URL and `https://<worker host>/files` once deployed |
 | `DRY_RUN` | leave `true` until you have run one dry-run campaign end to end |
@@ -73,7 +74,18 @@ Rendered images live in the `adpilot-storage` Docker volume and are served at `/
 
 ## 5. Dashboard on Vercel
 
-Vercel refused to let me create the project through the API (permission error), so do it in the UI: vercel.com > Add New > Project > import `mchristo839/adpilot`. Settings: Root Directory `apps/dashboard`, framework Next.js, production branch `claude/funny-cerf-1z4dqd` (or merge to `main` first). Environment variables: `WORKER_URL=https://adpilot.<your domain>` and `WORKER_API_KEY=<same key as the worker>`. Deploy. Add Vercel password protection or keep the URL private, the dashboard has no login of its own.
+Vercel refused to let me create the project through the API (permission error), so do it in the UI: vercel.com > Add New > Project > import `mchristo839/adpilot`. Settings: Root Directory `apps/dashboard`, framework Next.js, production branch `claude/funny-cerf-1z4dqd` (or merge to `main` first). Environment variables:
+
+| Variable | Value |
+|---|---|
+| `WORKER_URL` | `https://adpilot.<your domain>` |
+| `WORKER_API_KEY` | same key as the worker |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://ztpkbgngcnapbvyfeanb.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `sb_publishable_okPiKJ9_aZ_lTuU6hN0puw_cAYOYNT9` |
+| `ALLOWED_EMAILS` | `mario@utomat.com` |
+| `DASHBOARD_URL` | the Vercel URL (used in the login link) |
+
+Login is a magic link to your email, sent by Supabase Auth. In Supabase: Authentication > URL Configuration, set Site URL to the Vercel URL and add `https://<vercel url>/auth/callback` to Redirect URLs. Only addresses in `ALLOWED_EMAILS` can sign in, and every approval is recorded under that address.
 
 ## 6. Finish the n8n workflows (5 minutes)
 
@@ -84,10 +96,15 @@ Open each of the three unpublished workflows on n8n.utomat.com:
 3. Daily summary: workflow Settings > Timezone > Asia/Nicosia.
 4. Publish each one.
 
+## 6b. Weekly briefs (optional)
+
+The n8n workflow **AdPilot weekly briefs** creates one draft per brand every Monday at 09:00 Cyprus time (7 x daily cap as the run budget). Set the worker URL and credential like the others and publish it when you want drafts waiting in your inbox each week.
+
 ## 7. Go live, one brand at a time
 
 1. Run a full dry-run campaign on GreaseTrapQuotes (step 3). Check `audit_log` shows the campaign, ad sets, creatives and ads with `dry_run=true`.
-2. Set `DRY_RUN=false` in the worker `.env`, restart the container. `/health` shows `dry_run:false` and `writes_allowed:true`.
+2. Run `pnpm verify-meta --validate-writes` once. It sends a validate-only campaign create to each account (Meta checks the payload without creating anything).
+3. Set `DRY_RUN=false` in the worker `.env`, restart the container. `/health` shows `dry_run:false` and `writes_allowed:true`.
 3. New brief: GreaseTrapQuotes, 10 AUD per day, 7 days. Approve. Check Ads Manager shows the campaign ACTIVE with the right budget.
 4. Let the monitor run for two days. Read the 08:00 email.
 5. Test the kill switch from the dashboard button. Everything pauses within seconds. Reactivate in Ads Manager if you want to continue.

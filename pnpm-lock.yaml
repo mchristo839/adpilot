@@ -7,6 +7,16 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@adpilot/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@adpilot/meta':
+        specifier: workspace:*
+        version: link:packages/meta
+      '@adpilot/rules':
+        specifier: workspace:*
+        version: link:packages/rules
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

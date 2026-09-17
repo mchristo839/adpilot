@@ -71,18 +71,28 @@ Seed caps: CallCrewHQ USD 15/day, 300/month, CPA guard off until a lead event ex
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/brief` | create a draft campaign, run strategy and creative generation |
+| POST | `/brief` | create a draft campaign (202), strategy and creatives generate in the background |
+| POST | `/campaigns/:id/generate` | retry generation for a failed draft |
 | GET | `/campaigns`, `/campaigns/:id` | list, full draft with creatives and preview URLs |
-| POST | `/campaigns/:id/creatives/:cid/regenerate` | `{ part: "copy" \| "image" }` |
+| POST | `/campaigns/:id/creatives/:cid/regenerate` | `{ part: "copy" \| "image" }` (202, runs in background) |
 | POST | `/campaigns/:id/creatives/:cid/status` | `{ status: "approved" \| "rejected" \| "draft" }` |
 | POST | `/campaigns/:id/approve` | `{ creative_ids: [] }` publishes to Meta |
 | POST | `/campaigns/:id/discard` | discard a draft |
 | GET | `/monitor` | run the monitor loop for all active brands |
 | POST | `/kill` | `{ brand: "all" \| "<id or slug>" }` |
 | GET | `/report/daily?brand=` | daily summary payload; `&send=true` also pushes to the notify webhook |
+| GET | `/report/overview` | reporting page payload: 30-day ledger, caps, best and worst creatives per brand |
 | GET | `/brands`, POST `/brands`, PATCH `/brands/:id` | brand config; cap changes are audited |
 | GET | `/audit` | recent audit log |
 | GET | `/health` | mode and scope status, no auth |
+
+## Operational safety nets
+
+- **Monitor heartbeat.** Every monitor run writes `system_state.monitor.last_run`. The worker runs its own fallback monitor when n8n has not called `/monitor` for `MONITOR_FALLBACK_MS`, and emails you when the last run is older than `STALE_MONITOR_HOURS`. The daily summary and the Reports page show the last run.
+- **Ledger accuracy.** Each run upserts account-level spend for today and yesterday, so a missed final run of the day cannot under-count the month.
+- **Login.** The dashboard uses Supabase magic links restricted to `ALLOWED_EMAILS`; the worker records the login email as the approver and rejects actors outside `ALLOWED_APPROVERS`.
+- **Images.** Rendered PNGs are uploaded to the `adpilot-creatives` Supabase Storage bucket; publish falls back to the stored URL if the local file is gone.
+- **Feedback loop.** Strategy and copy prompts include the brand's best and worst creatives from the last 30 days. Interests are resolved to real Meta interest ids at brief time and shown on the review page.
 
 ## Adding a brand
 
