@@ -8,12 +8,15 @@ export interface ApprovalState {
   approved_at: string | null;
 }
 
-export function isApproved(c: ApprovalState, approverName: string): boolean {
-  return !!c.approved_by && c.approved_by === approverName && !!c.approved_at && !Number.isNaN(Date.parse(c.approved_at));
+export function isApproved(c: ApprovalState, approver: string | string[]): boolean {
+  const allowed = (Array.isArray(approver) ? approver : [approver]).map((a) => a.trim().toLowerCase()).filter(Boolean);
+  const by = (c.approved_by ?? "").trim().toLowerCase();
+  return !!by && allowed.includes(by) && !!c.approved_at && !Number.isNaN(Date.parse(c.approved_at));
 }
 
-export function assertApproved(c: ApprovalState, approverName: string, campaignId: string): void {
-  if (!isApproved(c, approverName)) {
-    throw new Error(`Campaign ${campaignId} is not approved by ${approverName}. Refusing to publish (rule 8).`);
+export function assertApproved(c: ApprovalState, approver: string | string[], campaignId: string): void {
+  if (!isApproved(c, approver)) {
+    const who = Array.isArray(approver) ? approver.join(", ") : approver;
+    throw new Error(`Campaign ${campaignId} is not approved by an allowed approver (${who}). Refusing to publish (rule 8).`);
   }
 }

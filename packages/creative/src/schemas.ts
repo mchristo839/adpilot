@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export const StrategySchema = z.object({
   campaign_name: z.string().min(3).max(80),
@@ -31,7 +31,7 @@ export const CreativeCopySchema = z.object({
     z.object({
       route: z.literal("template"),
       template_id: z.string(),
-      slots: z.record(z.string()),
+      slots: z.record(z.string(), z.string()),
     }),
     z.object({
       route: z.literal("fal"),

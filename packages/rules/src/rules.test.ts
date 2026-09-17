@@ -160,6 +160,7 @@ describe("rule 8: approval", () => {
     expect(isApproved({ approved_by: "mario", approved_at: "2026-01-01T00:00:00Z" }, "mario")).toBe(true);
     expect(isApproved({ approved_by: "mario", approved_at: null }, "mario")).toBe(false);
     expect(isApproved({ approved_by: "bob", approved_at: "2026-01-01T00:00:00Z" }, "mario")).toBe(false);
+    expect(isApproved({ approved_by: "Mario@utomat.com", approved_at: "2026-01-01T00:00:00Z" }, ["mario", "mario@utomat.com"])).toBe(true);
     expect(() => assertApproved({ approved_by: null, approved_at: null }, "mario", "c1")).toThrow(/rule 8/);
   });
 });

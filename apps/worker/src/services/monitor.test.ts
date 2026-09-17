@@ -104,6 +104,8 @@ function fakeMeta(todaySpend: string) {
     const url = String(input);
     let body: unknown = { data: [] };
     if (url.includes("/act_1?") || url.match(/\/act_1\?/)) body = { id: "act_1", spend_cap: "50000", amount_spent: "1000", currency: "AUD" };
+    else if (url.includes("/insights") && url.includes("level=account") && url.includes("date_preset=yesterday")) body = { data: [{ account_id: "1", spend: "4.00", date_start: "2026-03-09", date_stop: "2026-03-09" }] };
+    else if (url.includes("/insights") && url.includes("level=account")) body = { data: [{ account_id: "1", spend: todaySpend, date_start: "2026-03-10", date_stop: "2026-03-10" }] };
     else if (url.includes("/insights") && url.includes("date_preset=today")) body = { data: [{ ad_id: "ad1", adset_id: "sm1", campaign_id: "m1", spend: todaySpend, impressions: "10", clicks: "1", date_start: "", date_stop: "" }] };
     return new Response(JSON.stringify(body), { status: 200 });
   }) as unknown as typeof fetch;
@@ -116,7 +118,7 @@ function fakeMeta(todaySpend: string) {
 describe("monitor loop", () => {
   it("pauses a campaign whose spend today exceeds 1.5x daily budget within one run", async () => {
     const { runMonitor } = await import("./monitor.js");
-    const { db, writes } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [campaign as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [] });
+    const { db, writes } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [campaign as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
     const { meta, setStatus } = fakeMeta("16.00"); // 1600 cents > 1.5 x 1000
     const results = await runMonitor({ db, meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
     const r = results[0]!;
@@ -125,12 +127,15 @@ describe("monitor loop", () => {
     expect(setStatus).toHaveBeenCalledWith("m1", "PAUSED");
     expect(writes.some((w) => w.table === "campaigns" && w.op === "update" && (w.payload as { status: string }).status === "PAUSED")).toBe(true);
     expect(writes.some((w) => w.table === "audit_log" && w.op === "insert")).toBe(true);
-    expect(writes.some((w) => w.table === "spend_ledger" && w.op === "upsert" && (w.payload as { spend_cents: number }).spend_cents === 1600)).toBe(true);
+    const ledger = writes.find((w) => w.table === "spend_ledger" && w.op === "upsert")!.payload as { date: string; spend_cents: number }[];
+    expect(ledger.find((r) => r.date === "2026-03-10")?.spend_cents).toBe(1600);
+    expect(ledger.find((r) => r.date === "2026-03-09")?.spend_cents).toBe(400);
+    expect(writes.some((w) => w.table === "system_state" && w.op === "upsert")).toBe(true);
   });
 
   it("leaves a campaign alone under budget", async () => {
     const { runMonitor } = await import("./monitor.js");
-    const { db } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [] });
+    const { db } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
     const { meta, setStatus } = fakeMeta("9.00");
     const results = await runMonitor({ db, meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
     expect(results[0]!.actions.filter((a) => a.action !== "notify")).toEqual([]);

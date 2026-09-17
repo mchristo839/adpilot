@@ -35,6 +35,7 @@ export interface Brand {
 }
 
 export type CampaignStatus =
+  | "GENERATING"
   | "DRAFT"
   | "PENDING_APPROVAL"
   | "APPROVED"
@@ -63,6 +64,7 @@ export interface Campaign {
   approved_by: string | null;
   approved_at: string | null;
   last_error: string | null;
+  generation_error: string | null;
   dry_run: boolean;
   created_at: string;
   updated_at: string;
@@ -81,6 +83,8 @@ export interface Strategy {
   };
   placements: "advantage_plus" | "manual";
   recommended_daily_budget: number;
+  resolved_interests?: { id: string; name: string; audience_size_lower_bound?: number; audience_size_upper_bound?: number; query: string }[];
+  unresolved_interests?: string[];
 }
 
 export interface Adset {
@@ -119,10 +123,13 @@ export interface Creative {
   image_spec: ImageSpec;
   image_path: string | null;
   image_path_story: string | null;
+  image_url: string | null;
+  image_url_story: string | null;
   image_hash: string | null;
   meta_creative_id: string | null;
   meta_ad_id: string | null;
   status: CreativeStatus;
+  generating: boolean;
   live_since: string | null;
   created_at: string;
   updated_at: string;

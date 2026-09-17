@@ -14,6 +14,7 @@ import {
 import type { Ctx } from "../context.js";
 import { activeBrands } from "./brands.js";
 import { notify } from "./notify.js";
+import { STATE_LAST_MONITOR, setState } from "./state.js";
 
 export interface MonitorBrandResult {
   brand: string;
@@ -35,6 +36,10 @@ export async function runMonitor(ctx: Ctx, now = new Date()): Promise<MonitorBra
       console.error(`[monitor] ${brand.slug}: ${(e as Error).message}`);
     }
   }
+  await setState(ctx.db, STATE_LAST_MONITOR, {
+    run_at: now.toISOString(),
+    brands: results.map((r) => ({ brand: r.brand, ads_seen: r.ads_seen, actions: r.actions.length, errors: r.errors })),
+  });
   return results;
 }
 
@@ -57,8 +62,16 @@ export async function monitorBrand(ctx: Ctx, brand: Brand, now: Date): Promise<M
     : [];
   const creativeByAd = new Map(creatives.map((c) => [c.meta_ad_id!, c]));
 
-  // 1. Insights today, last_7d and last_3d (3-day CPA guard). Account-level today for the ledger.
-  const [today, last7, last3] = await Promise.all([meta.insights(act, "today"), meta.insights(act, "last_7d"), meta.insights(act, "last_3d")]);
+  // 1. Insights today, last_7d and last_3d (3-day CPA guard) at ad level, plus
+  //    account-level today and yesterday for the spend ledger (covers every ad on
+  //    the account, and fixes yesterday's row when the last run of a day was missed).
+  const [today, last7, last3, accToday, accYesterday] = await Promise.all([
+    meta.insights(act, "today"),
+    meta.insights(act, "last_7d"),
+    meta.insights(act, "last_3d"),
+    meta.insights(act, "today", "account"),
+    meta.insights(act, "yesterday", "account"),
+  ]);
 
   // 2. Snapshots per ad per run
   const snapshots: InsightSnapshot[] = [];
@@ -92,10 +105,14 @@ export async function monitorBrand(ctx: Ctx, brand: Brand, now: Date): Promise<M
     if (error) errors.push(`snapshots: ${error.message}`);
   }
 
-  // Spend ledger: today's account spend (all ads on the account, not only ours) upserted per day.
-  const todaySpend = todayN.reduce((s, r) => s + r.spend_cents, 0);
+  // Spend ledger: account-level spend for today and yesterday, upserted per day.
+  const sumSpend = (rows: InsightRow[]) => rows.reduce((s, r) => s + Math.round(Number.parseFloat(r.spend ?? "0") * 100), 0);
+  const todaySpend = accToday.length ? sumSpend(accToday) : todayN.reduce((s, r) => s + r.spend_cents, 0);
   const date = localDate(now, brand.timezone);
-  await db.from("spend_ledger").upsert({ brand_id: brand.id, date, spend_cents: todaySpend, updated_at: now.toISOString() });
+  const ledgerRows = [{ brand_id: brand.id, date, spend_cents: todaySpend, updated_at: now.toISOString() }];
+  const yRow = accYesterday[0];
+  if (yRow?.date_start) ledgerRows.push({ brand_id: brand.id, date: yRow.date_start, spend_cents: sumSpend(accYesterday), updated_at: now.toISOString() });
+  await db.from("spend_ledger").upsert(ledgerRows);
 
   // 3. Rules
   const activeCampaigns = campaigns.filter((c) => c.status === "ACTIVE");

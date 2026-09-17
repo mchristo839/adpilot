@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { audit, must, type Adset, type Brand, type Campaign, type Creative } from "@adpilot/db";
 import { withUtm, type CtaType, type Targeting } from "@adpilot/meta";
 import { assertApproved } from "@adpilot/rules";
@@ -8,6 +6,7 @@ import { env } from "../env.js";
 import { brandById } from "./brands.js";
 import { assertDailyCap } from "./budget.js";
 import { notify } from "./notify.js";
+import { loadImageBytes } from "./storage.js";
 
 /**
  * 5.4 and 5.5. Approve selected creatives and publish to Meta in order,
@@ -39,7 +38,7 @@ export async function approveAndPublish(ctx: Ctx, campaignId: string, creativeId
     "approve campaign",
   ) as Campaign;
   await audit(db, { actor: approver, entity_type: "campaign", entity_id: campaignId, action: "approved", before_json: before, after_json: campaign });
-  assertApproved(campaign, env.APPROVER_NAME, campaignId);
+  assertApproved(campaign, env.ALLOWED_APPROVERS, campaignId);
 
   await db.from("campaigns").update({ status: "PUBLISHING" }).eq("id", campaignId);
   try {
@@ -73,9 +72,9 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
   // 1. Upload images
   for (const c of creatives) {
     if (c.image_hash) continue;
-    if (!c.image_path) throw new Error(`Creative ${c.id} has no rendered image`);
-    const bytes = await readFile(path.join(env.STORAGE_DIR, c.image_path));
-    const r = await meta.uploadImage(act, `${c.id}.png`, new Uint8Array(bytes));
+    if (!c.image_path && !c.image_url) throw new Error(`Creative ${c.id} has no rendered image`);
+    const bytes = await loadImageBytes(c.image_path, c.image_url);
+    const r = await meta.uploadImage(act, `${c.id}.png`, bytes);
     const images = r.response?.images ?? {};
     const hash = ctx.dryRun ? `dry_hash_${c.id.slice(0, 8)}` : Object.values(images)[0]?.hash;
     if (!hash) throw new Error(`No image hash returned for creative ${c.id}`);
@@ -88,7 +87,7 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
     const r = await meta.createCampaign(act, { name: campaign.name, objective: campaign.objective, daily_budget_cents: campaign.daily_budget_cents, status: "PAUSED" });
     campaign.meta_campaign_id = r.response!.id;
     await db.from("campaigns").update({ meta_campaign_id: campaign.meta_campaign_id }).eq("id", campaign.id);
-    await db.from("budget_history").insert({ campaign_id: campaign.id, daily_budget_cents: campaign.daily_budget_cents, actor: env.APPROVER_NAME });
+    await db.from("budget_history").insert({ campaign_id: campaign.id, daily_budget_cents: campaign.daily_budget_cents, actor: campaign.approved_by ?? env.APPROVER_NAME });
   }
 
   // 3. Ad sets. Leads objective needs a pixel and a lead event; without them
@@ -96,7 +95,7 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
   const { optimization_goal, promoted_object } = optimisationFor(campaign.objective, brand);
   for (const s of adsets) {
     if (s.meta_adset_id) continue;
-    const targeting = await resolveTargeting(ctx, s.targeting_json);
+    const targeting = s.targeting_json as unknown as Targeting;
     const r = await meta.createAdset(act, {
       name: s.name,
       campaign_id: campaign.meta_campaign_id!,
@@ -163,27 +162,7 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
   await db.from("adsets").update({ status: "ACTIVE" }).eq("campaign_id", campaign.id).in("id", adsets.map((s) => s.id));
   await db.from("creatives").update({ status: "live", live_since: now }).in("id", creatives.map((c) => c.id));
   await db.from("campaigns").update({ status: "ACTIVE" }).eq("id", campaign.id);
-  await audit(db, { actor: env.APPROVER_NAME, entity_type: "campaign", entity_id: campaign.id, action: "activated", after_json: { meta_campaign_id: campaign.meta_campaign_id, ads: creatives.map((c) => c.meta_ad_id) }, dry_run: ctx.dryRun });
-}
-
-/** Map interest names to Meta interest ids via targeting search (skipped in dry run). */
-async function resolveTargeting(ctx: Ctx, t: Record<string, unknown>): Promise<Targeting> {
-  const names = (t._interest_names as string[] | undefined) ?? [];
-  const { _interest_names, ...rest } = t;
-  const targeting = rest as unknown as Targeting;
-  if (!names.length || ctx.dryRun) return targeting;
-  const interests: { id: string; name: string }[] = [];
-  for (const n of names.slice(0, 10)) {
-    try {
-      const res = await ctx.meta.get<{ data: { id: string; name: string }[] }>("/search", { type: "adinterest", q: n, limit: 1 });
-      const hit = res.data?.[0];
-      if (hit) interests.push({ id: hit.id, name: hit.name });
-    } catch (e) {
-      console.warn(`[targeting] interest lookup failed for "${n}": ${(e as Error).message}`);
-    }
-  }
-  if (interests.length) targeting.flexible_spec = [{ interests }];
-  return targeting;
+  await audit(db, { actor: campaign.approved_by ?? env.APPROVER_NAME, entity_type: "campaign", entity_id: campaign.id, action: "activated", after_json: { meta_campaign_id: campaign.meta_campaign_id, ads: creatives.map((c) => c.meta_ad_id) }, dry_run: ctx.dryRun });
 }
 
 const STANDARD_EVENTS = new Set(["LEAD", "COMPLETE_REGISTRATION", "CONTACT", "SCHEDULE", "SUBMIT_APPLICATION", "SUBSCRIBE", "PURCHASE", "START_TRIAL"]);
@@ -200,7 +179,7 @@ export function optimisationFor(
   }
   const ev = brand.lead_event.trim();
   const upper = ev.toUpperCase().replace(/\s+/g, "_");
-  const promoted_object = STANDARD_EVENTS.has(upper) ? { pixel_id: brand.pixel_id, custom_event_type: upper } : { pixel_id: brand.pixel_id, custom_event_type: "OTHER", custom_event_str: ev };
+  const promoted_object: Record<string, string> = STANDARD_EVENTS.has(upper) ? { pixel_id: brand.pixel_id, custom_event_type: upper } : { pixel_id: brand.pixel_id, custom_event_type: "OTHER", custom_event_str: ev };
   return { optimization_goal: "OFFSITE_CONVERSIONS", promoted_object };
 }
 
