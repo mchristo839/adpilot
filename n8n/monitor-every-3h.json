@@ -44,52 +44,6 @@
         500,
         300
       ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "typeValidation": "loose"
-          },
-          "conditions": [
-            {
-              "leftValue": "={{ $json.results.flatMap(r => r.actions).filter(a => a.severity !== 'info').length }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "gt"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "name": "Any triggers?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        650,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "fromEmail": "={{ $vars.ADPILOT_EMAIL_FROM }}",
-        "toEmail": "={{ $vars.ADPILOT_EMAIL_TO }}",
-        "subject": "=AdPilot rule triggered{{ $json.dry_run ? ' [DRY RUN]' : '' }}",
-        "emailFormat": "text",
-        "text": "={{ $json.results.flatMap(r => r.actions.filter(a => a.severity !== 'info').map(a => `${r.brand}: ${a.rule} ${a.action} ${a.entity_id} - ${a.reason}`)).join('\\n') }}",
-        "options": {}
-      },
-      "name": "Email alert",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
-      "position": [
-        800,
-        300
-      ],
-      "credentials": {}
     }
   ],
   "connections": {
@@ -102,29 +56,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "GET /monitor": {
-      "main": [
-        [
-          {
-            "node": "Any triggers?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Any triggers?": {
-      "main": [
-        [
-          {
-            "node": "Email alert",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
       ]
     }
   },

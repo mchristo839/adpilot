@@ -51,7 +51,7 @@ export interface Overview {
     brand: string; name: string; currency: string; active: boolean; daily_cap_cents: number; monthly_cap_cents: number; spend_mtd_cents: number;
     spend_yesterday_cents: number; active_daily_budget_cents: number; active_campaigns: number;
     ledger: { date: string; spend_cents: number }[];
-    best: { creative_id: string | null; ad_id: string; headline: string | null; spend_cents: number; results: number; cost_per_result_cents: number | null }[];
-    worst: { creative_id: string | null; ad_id: string; headline: string | null; spend_cents: number; results: number; cost_per_result_cents: number | null }[];
+    best: { creative_id: string | null; campaign_id?: string | null; ad_id: string; headline: string | null; spend_cents: number; results: number; cost_per_result_cents: number | null }[];
+    worst: { creative_id: string | null; campaign_id?: string | null; ad_id: string; headline: string | null; spend_cents: number; results: number; cost_per_result_cents: number | null }[];
   }[];
 }

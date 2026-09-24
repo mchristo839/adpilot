@@ -17,18 +17,7 @@ export async function supabaseServer() {
   });
 }
 
-export function allowedEmails(): string[] {
-  return (process.env.ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-export function isAllowed(email: string | undefined | null): boolean {
-  if (!email) return false;
-  const list = allowedEmails();
-  return list.length === 0 ? false : list.includes(email.toLowerCase());
-}
+export { allowedEmails, isAllowed } from "../allowed";
 
 /** Logged-in user's email, or null. */
 export async function currentEmail(): Promise<string | null> {

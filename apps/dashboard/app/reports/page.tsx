@@ -40,7 +40,7 @@ function Lines({ title, rows, currency, unit }: { title: string; rows: Overview[
           <tbody>
             {rows.map((r) => (
               <tr key={r.ad_id}>
-                <td>{r.creative_id ? <a href={`/campaigns?creative=${r.creative_id}`}>{r.headline ?? r.ad_id}</a> : r.headline ?? r.ad_id}</td>
+                <td>{r.campaign_id ? <a href={`/campaigns/${r.campaign_id}`}>{r.headline ?? r.ad_id}</a> : r.headline ?? r.ad_id}</td>
                 <td className="muted">{money(r.spend_cents, currency)}</td>
                 <td className="muted">{r.results} {unit}</td>
                 <td>{r.cost_per_result_cents !== null ? money(r.cost_per_result_cents, currency) : "no results"}</td>

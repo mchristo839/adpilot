@@ -14,7 +14,7 @@ import {
 import type { Ctx } from "../context.js";
 import { activeBrands } from "./brands.js";
 import { notify } from "./notify.js";
-import { STATE_LAST_MONITOR, setState } from "./state.js";
+import { STATE_LAST_MONITOR, getState, setState } from "./state.js";
 
 export interface MonitorBrandResult {
   brand: string;
@@ -32,8 +32,12 @@ export async function runMonitor(ctx: Ctx, now = new Date()): Promise<MonitorBra
     try {
       results.push(await monitorBrand(ctx, brand, now));
     } catch (e) {
-      results.push({ brand: brand.slug, ads_seen: 0, today_spend_cents: 0, actions: [], errors: [(e as Error).message] });
-      console.error(`[monitor] ${brand.slug}: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      results.push({ brand: brand.slug, ads_seen: 0, today_spend_cents: 0, actions: [], errors: [msg] });
+      console.error(`[monitor] ${brand.slug}: ${msg}`);
+      if (await shouldAlert(ctx.db, `monitor_error:${brand.id}`, 6 * 3600 * 1000)) {
+        await notify({ kind: "info", brand: brand.slug, title: `Monitor failed for ${brand.name}`, body: `${msg}. Budget rules did not run for this brand. Check the Meta token and the worker logs.`, severity: "critical" });
+      }
     }
   }
   await setState(ctx.db, STATE_LAST_MONITOR, {
@@ -55,7 +59,10 @@ export async function monitorBrand(ctx: Ctx, brand: Brand, now: Date): Promise<M
   actions.push(...capCheck.actions);
 
   // Our live campaigns for this brand
-  const campaigns = must(await db.from("campaigns").select("*").eq("brand_id", brand.id).in("status", ["ACTIVE", "PAUSED"]).not("meta_campaign_id", "is", null), "load campaigns") as Campaign[];
+  // In live mode, campaigns "launched" during dry run carry fake Meta ids and are ignored.
+  const campaigns = (
+    must(await db.from("campaigns").select("*").eq("brand_id", brand.id).in("status", ["ACTIVE", "PAUSED"]).not("meta_campaign_id", "is", null), "load campaigns") as Campaign[]
+  ).filter((c) => ctx.dryRun || !c.dry_run);
   const byMetaId = new Map(campaigns.map((c) => [c.meta_campaign_id!, c]));
   const creatives = campaigns.length
     ? (must(await db.from("creatives").select("*").in("campaign_id", campaigns.map((c) => c.id)).not("meta_ad_id", "is", null), "load creatives") as Creative[])
@@ -108,7 +115,8 @@ export async function monitorBrand(ctx: Ctx, brand: Brand, now: Date): Promise<M
   // Spend ledger: account-level spend for today and yesterday, upserted per day.
   const sumSpend = (rows: InsightRow[]) => rows.reduce((s, r) => s + Math.round(Number.parseFloat(r.spend ?? "0") * 100), 0);
   const todaySpend = accToday.length ? sumSpend(accToday) : todayN.reduce((s, r) => s + r.spend_cents, 0);
-  const date = localDate(now, brand.timezone);
+  // Meta reports "today" in the ad account's timezone; key the row by that day when available.
+  const date = accToday[0]?.date_start || localDate(now, brand.timezone);
   const ledgerRows = [{ brand_id: brand.id, date, spend_cents: todaySpend, updated_at: now.toISOString() }];
   const yRow = accYesterday[0];
   if (yRow?.date_start) ledgerRows.push({ brand_id: brand.id, date: yRow.date_start, spend_cents: sumSpend(accYesterday), updated_at: now.toISOString() });
@@ -139,10 +147,16 @@ export async function monitorBrand(ctx: Ctx, brand: Brand, now: Date): Promise<M
   });
   actions.push(...monthly.actions);
 
-  // Rule 5: CPA guard on 3-day ad set totals.
+  // Rule 5: CPA guard on 3-day ad set totals, skipping ad sets already paused (no repeat pauses or emails).
+  const adsetRows = campaigns.length
+    ? (must(await db.from("adsets").select("meta_adset_id,status").in("campaign_id", campaigns.map((c) => c.id)), "load adsets") as { meta_adset_id: string | null; status: string }[])
+    : [];
+  const adsetStatus = new Map(adsetRows.filter((a) => a.meta_adset_id).map((a) => [a.meta_adset_id!, a.status]));
   const byAdset = new Map<string, { spend_cents: number; results: number }>();
   for (const r of last3N) {
     if (!r.adset_id || !r.campaign || r.campaign.status !== "ACTIVE") continue;
+    const st = adsetStatus.get(r.adset_id);
+    if (st && st !== "ACTIVE") continue;
     const a = byAdset.get(r.adset_id) ?? { spend_cents: 0, results: 0 };
     a.spend_cents += r.spend_cents;
     a.results += r.results;
@@ -176,14 +190,19 @@ async function applyActions(ctx: Ctx, brand: Brand, campaigns: Campaign[], _crea
     try {
       switch (a.action) {
         case "pause_brand": {
-          for (const c of campaigns.filter((c) => c.status === "ACTIVE")) await pauseCampaign(db, meta, c, a.rule);
-          await notify({ kind: "rule_triggered", brand: brand.slug, title: `${a.rule}: paused all campaigns for ${brand.name}`, body: a.reason, severity: a.severity });
+          const live = campaigns.filter((c) => c.status === "ACTIVE");
+          for (const c of live) {
+            await pauseCampaign(db, meta, c, a.rule);
+            c.status = "PAUSED"; // later actions in this run must not pause it again
+          }
+          if (live.length) await notify({ kind: "rule_triggered", brand: brand.slug, title: `${a.rule}: paused all campaigns for ${brand.name}`, body: a.reason, severity: a.severity });
           break;
         }
         case "pause_campaign": {
           const c = campaigns.find((c) => c.id === a.entity_id);
           if (c && c.status === "ACTIVE") {
             await pauseCampaign(db, meta, c, a.rule);
+            c.status = "PAUSED";
             await notify({ kind: "rule_triggered", brand: brand.slug, title: `${a.rule}: paused ${c.name}`, body: a.reason, severity: a.severity });
           }
           break;
@@ -204,8 +223,11 @@ async function applyActions(ctx: Ctx, brand: Brand, campaigns: Campaign[], _crea
           break;
         }
         case "notify":
-          if (a.severity !== "info") await notify({ kind: "rule_triggered", brand: brand.slug, title: a.rule, body: a.reason, severity: a.severity });
-          await audit(db, { actor: a.rule, entity_type: a.entity_type, entity_id: a.entity_id, action: "notify", after_json: { reason: a.reason } });
+          // Standing conditions (no spend cap, cap at 90%) would repeat every 3 hours; alert once a day.
+          if (await shouldAlert(db, `${a.rule}:${a.entity_id}`)) {
+            if (a.severity !== "info") await notify({ kind: "rule_triggered", brand: brand.slug, title: a.rule, body: a.reason, severity: a.severity });
+            await audit(db, { actor: a.rule, entity_type: a.entity_type, entity_id: a.entity_id, action: "notify", after_json: { reason: a.reason } });
+          }
           break;
         case "reject":
           await audit(db, { actor: a.rule, entity_type: a.entity_type, entity_id: a.entity_id, action: "reject", after_json: { reason: a.reason } });
@@ -218,6 +240,14 @@ async function applyActions(ctx: Ctx, brand: Brand, campaigns: Campaign[], _crea
   }
 }
 
+/** True at most once per window for a given key; used to throttle repeat alerts. */
+export async function shouldAlert(db: Db, key: string, windowMs = 24 * 3600 * 1000): Promise<boolean> {
+  const last = await getState<{ at: string }>(db, `alert:${key}`);
+  if (last && Date.now() - Date.parse(last.value.at) < windowMs) return false;
+  await setState(db, `alert:${key}`, { at: new Date().toISOString() });
+  return true;
+}
+
 async function adsetIdByMeta(db: Db, metaAdsetId: string): Promise<string | null> {
   const { data } = await db.from("adsets").select("id").eq("meta_adset_id", metaAdsetId).maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
@@ -226,6 +256,6 @@ async function adsetIdByMeta(db: Db, metaAdsetId: string): Promise<string | null
 export async function pauseCampaign(db: Db, meta: MetaClient, c: Campaign, actor: string): Promise<void> {
   const r = await meta.setStatus(c.meta_campaign_id!, "PAUSED");
   await db.from("campaigns").update({ status: "PAUSED" }).eq("id", c.id);
-  await db.from("creatives").update({ status: actor === "mario" || actor === "kill_switch" ? "paused_manual" : "paused_by_rule" }).eq("campaign_id", c.id).eq("status", "live");
+  await db.from("creatives").update({ status: actor === "kill_switch" ? "paused_manual" : "paused_by_rule" }).eq("campaign_id", c.id).eq("status", "live");
   await audit(db, { actor, entity_type: "campaign", entity_id: c.id, action: "pause", before_json: { status: c.status }, after_json: { status: "PAUSED", meta_campaign_id: c.meta_campaign_id }, meta_response_json: r.response, dry_run: r.dry_run });
 }

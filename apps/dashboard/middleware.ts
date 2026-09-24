@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isAllowed } from "./lib/allowed";
 
 const PUBLIC = ["/login", "/auth/callback"];
 
@@ -20,11 +21,13 @@ export async function middleware(req: NextRequest) {
   } = await supabase.auth.getUser();
   const path = req.nextUrl.pathname;
   const isPublic = PUBLIC.some((p) => path.startsWith(p));
-  const allowed = (process.env.ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  const ok = !!user?.email && allowed.includes(user.email.toLowerCase());
+  const ok = isAllowed(user?.email);
+  // Redirects must carry the cookies Supabase set on `res` (refreshed session or signOut clearing).
+  const redirect = (url: URL) => {
+    const r = NextResponse.redirect(url);
+    for (const c of res.cookies.getAll()) r.cookies.set(c);
+    return r;
+  };
 
   if (!ok && !isPublic) {
     if (user) await supabase.auth.signOut();
@@ -32,13 +35,13 @@ export async function middleware(req: NextRequest) {
     url.pathname = "/login";
     url.searchParams.set("next", path);
     if (user) url.searchParams.set("error", "not_allowed");
-    return NextResponse.redirect(url);
+    return redirect(url);
   }
   if (ok && path === "/login") {
     const url = req.nextUrl.clone();
     url.pathname = "/";
     url.search = "";
-    return NextResponse.redirect(url);
+    return redirect(url);
   }
   return res;
 }

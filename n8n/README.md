@@ -13,7 +13,7 @@ Attach an SMTP credential to every "Email" node after import.
 
 | File | Trigger | What it does |
 |---|---|---|
-| `monitor-every-3h.json` | Cron `0 */3 * * *` | `GET /monitor`, emails you if any rule fired |
+| `monitor-every-3h.json` | Cron `0 */3 * * *` | `GET /monitor`. Only triggers the run: the worker itself emails you (once) about rule triggers and monitor failures through the notify webhook |
 | `daily-summary-0800-cyprus.json` | Cron `0 8 * * *` in `Asia/Nicosia` | `GET /report/daily`, one email per brand |
 | `notify-webhook.json` | Webhook `POST /webhook/adpilot-notify` | Emails worker notifications (approval needed, rule triggered, publish failed, kill). Put its URL in `N8N_NOTIFY_WEBHOOK_URL` |
 | `slack-kill-command.json` | Webhook `POST /webhook/adpilot-kill` (Slack slash command `/adkill`) | Optional. Calls `POST /kill` with `brand=all` or the slash command argument. The dashboard button is the primary kill switch |

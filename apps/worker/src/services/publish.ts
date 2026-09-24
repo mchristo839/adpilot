@@ -19,11 +19,14 @@ export async function approveAndPublish(ctx: Ctx, campaignId: string, creativeId
   if (!["PENDING_APPROVAL", "DRAFT", "FAILED", "APPROVED"].includes(campaign.status)) {
     throw new Error(`Campaign is ${campaign.status}; only pending drafts can be approved`);
   }
+  if (campaign.generation_error || !campaign.strategy_json) throw new Error("Generation did not finish for this campaign. Retry generation before approving.");
+  const busy = must(await db.from("creatives").select("id").eq("campaign_id", campaignId).eq("generating", true), "generating creatives") as { id: string }[];
+  if (busy.length) throw new Error(`${busy.length} creative(s) are still regenerating. Wait for them to finish before approving.`);
   const brand = await brandById(db, campaign.brand_id);
   if (!brand.active) throw new Error(`Brand ${brand.slug} is inactive. Activate it in the dashboard first.`);
 
   // Rule 3: daily cap at launch.
-  await assertDailyCap(db, brand.id, brand.daily_cap_cents, { campaign_id: campaign.id, daily_budget_cents: campaign.daily_budget_cents });
+  await assertDailyCap(db, brand.id, brand.daily_cap_cents, { campaign_id: campaign.id, daily_budget_cents: campaign.daily_budget_cents }, ctx.dryRun);
 
   // Mark creatives
   if (!creativeIds.length) throw new Error("Select at least one creative to approve");
@@ -34,7 +37,7 @@ export async function approveAndPublish(ctx: Ctx, campaignId: string, creativeId
   const before = { ...campaign };
   const approved_at = new Date().toISOString();
   campaign = must(
-    await db.from("campaigns").update({ approved_by: approver, approved_at, status: "APPROVED", last_error: null }).eq("id", campaignId).select("*").single(),
+    await db.from("campaigns").update({ approved_by: approver, approved_at, status: "APPROVED", last_error: null, dry_run: ctx.dryRun }).eq("id", campaignId).select("*").single(),
     "approve campaign",
   ) as Campaign;
   await audit(db, { actor: approver, entity_type: "campaign", entity_id: campaignId, action: "approved", before_json: before, after_json: campaign });
@@ -95,7 +98,11 @@ async function publish(ctx: Ctx, brand: Brand, campaign: Campaign): Promise<void
   const { optimization_goal, promoted_object } = optimisationFor(campaign.objective, brand);
   for (const s of adsets) {
     if (s.meta_adset_id) continue;
-    const targeting = s.targeting_json as unknown as Targeting;
+    // Ad sets drafted before interests were resolved at brief time carry a private
+    // _interest_names key that Meta rejects; strip it so those drafts still publish.
+    const { _interest_names, ...rest } = s.targeting_json as Record<string, unknown>;
+    if (_interest_names) console.warn(`[publish] adset ${s.id} has unresolved legacy interests; publishing without them`);
+    const targeting = rest as unknown as Targeting;
     const r = await meta.createAdset(act, {
       name: s.name,
       campaign_id: campaign.meta_campaign_id!,

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
@@ -6,7 +7,7 @@ import { must, type Campaign, type Creative, type Brand } from "@adpilot/db";
 import { toCents } from "@adpilot/rules";
 import { getCtx } from "./context.js";
 import { env } from "./env.js";
-import { BriefSchema, createBriefDraft, generateInBackground, regenerateCreative, startRegenerate } from "./services/brief.js";
+import { BriefSchema, createBriefDraft, generateInBackground, isGenerating, regenerateCreative, startRegenerate } from "./services/brief.js";
 import { approveAndPublish, discardCampaign } from "./services/publish.js";
 import { runMonitor } from "./services/monitor.js";
 import { killSwitch } from "./services/kill.js";
@@ -19,8 +20,10 @@ export const app = new Hono();
 app.use("*", async (c, next) => {
   const p = c.req.path;
   if (p === "/health" || p.startsWith("/files/")) return next();
-  const key = c.req.header("x-api-key") ?? c.req.query("api_key");
-  if (!env.WORKER_API_KEY || key !== env.WORKER_API_KEY) return c.json({ error: "unauthorised" }, 401);
+  // Header only: keys in query strings end up in proxy and access logs.
+  const key = Buffer.from(c.req.header("x-api-key") ?? "");
+  const want = Buffer.from(env.WORKER_API_KEY);
+  if (!want.length || key.length !== want.length || !timingSafeEqual(key, want)) return c.json({ error: "unauthorised" }, 401);
   return next();
 });
 
@@ -37,6 +40,13 @@ function actorOf(c: { req: { header: (n: string) => string | undefined } }): str
   return a;
 }
 
+/** Like actorOf but never refuses: the kill switch must work even when ALLOWED_APPROVERS is misconfigured. */
+function killActorOf(c: { req: { header: (n: string) => string | undefined } }): string {
+  const a = (c.req.header("x-actor") ?? "").trim().toLowerCase();
+  if (!a) return env.APPROVER_NAME;
+  return env.ALLOWED_APPROVERS.includes(a) ? a : `${a} (not in ALLOWED_APPROVERS)`;
+}
+
 app.get("/health", (c) => {
   const ctx = getCtx();
   return c.json({ ok: true, dry_run: ctx.dryRun, writes_allowed: ctx.meta.scopes?.writes_allowed ?? null, version: env.META_API_VERSION, storage: env.STORAGE_BACKEND, approvers: env.ALLOWED_APPROVERS });
@@ -46,7 +56,7 @@ app.get("/health", (c) => {
 app.get("/files/*", async (c) => {
   const rel = c.req.path.replace(/^\/files\//, "");
   const file = path.resolve(env.STORAGE_DIR, rel);
-  if (!file.startsWith(env.STORAGE_DIR) || !file.endsWith(".png")) return c.notFound();
+  if (!file.startsWith(env.STORAGE_DIR + path.sep) || !file.endsWith(".png")) return c.notFound();
   try {
     const bytes = await readFile(file);
     return new Response(bytes, { headers: { "content-type": "image/png", "cache-control": "public, max-age=3600" } });
@@ -132,6 +142,7 @@ app.post("/campaigns/:id/generate", async (c) => {
   const id = c.req.param("id");
   const campaign = must(await ctx.db.from("campaigns").select("*").eq("id", id).single(), "campaign") as Campaign;
   if (!["GENERATING", "FAILED", "DRAFT"].includes(campaign.status)) throw new Error(`Campaign is ${campaign.status}`);
+  if (isGenerating(id)) throw new Error("Generation is already running for this campaign");
   await ctx.db.from("campaigns").update({ status: "GENERATING", generation_error: null }).eq("id", id);
   generateInBackground(ctx, id);
   return c.json({ ok: true, id }, 202);
@@ -199,7 +210,7 @@ app.post("/kill", async (c) => {
   const ctx = getCtx();
   const body = (await c.req.json().catch(() => ({}))) as { brand?: string };
   const brand = body.brand ?? c.req.query("brand") ?? "all";
-  const result = await killSwitch(ctx, brand, actorOf(c));
+  const result = await killSwitch(ctx, brand, killActorOf(c));
   return c.json(result);
 });
 

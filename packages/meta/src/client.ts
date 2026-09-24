@@ -90,7 +90,11 @@ export class MetaClient {
         json = { error: { message: text.slice(0, 200) } };
       }
       if (res.ok) {
-        this.noteUsage(res);
+        const pct = this.usagePct(res);
+        if (pct >= 85) {
+          this.log.warn(`[meta] API usage at ${pct}%. Backing off 5s.`);
+          await sleep(5000);
+        }
         return json as T;
       }
       const err = new GraphApiError(res.status, (json as { error?: never })?.error, `${method} ${url.pathname}`);
@@ -105,22 +109,24 @@ export class MetaClient {
     }
   }
 
-  /** Slow down proactively when Meta reports high usage in headers. */
-  private noteUsage(res: Response): void {
+  /** Highest usage percentage Meta reports in the rate-limit headers (0 when absent). */
+  private usagePct(res: Response): number {
     const h = res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage");
-    if (!h) return;
+    if (!h) return 0;
+    let max = 0;
     try {
       const parsed = JSON.parse(h) as Record<string, { call_count?: number; total_cputime?: number; total_time?: number }[] | { acc_id_util_pct?: number }>;
       for (const v of Object.values(parsed)) {
         const arr = Array.isArray(v) ? v : [v];
         for (const u of arr) {
           const pct = Math.max((u as { call_count?: number }).call_count ?? 0, (u as { total_time?: number }).total_time ?? 0, (u as { acc_id_util_pct?: number }).acc_id_util_pct ?? 0);
-          if (pct >= 85) this.log.warn(`[meta] API usage at ${pct}%. Backing off 5s.`);
+          max = Math.max(max, pct);
         }
       }
     } catch {
-      /* ignore */
+      /* ignore malformed header */
     }
+    return max;
   }
 
   async get<T>(path: string, params: Record<string, unknown> = {}): Promise<T> {

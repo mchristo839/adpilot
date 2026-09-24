@@ -21,7 +21,7 @@ export interface KillResult {
 export async function killSwitch(ctx: Ctx, brand: "all" | string, actor: string): Promise<KillResult> {
   const t0 = Date.now();
   const brandId = brand === "all" ? "all" : (await brandByIdOrSlug(ctx.db, brand)).id;
-  const rows = must(await ctx.db.from("campaigns").select("*").not("meta_campaign_id", "is", null), "load campaigns") as Campaign[];
+  const rows = (must(await ctx.db.from("campaigns").select("*").not("meta_campaign_id", "is", null), "load campaigns") as Campaign[]).filter((c) => ctx.dryRun || !c.dry_run);
   const targets = planKill(brandId, rows.map((c) => ({ campaign_id: c.id, brand_id: c.brand_id, meta_campaign_id: c.meta_campaign_id, status: c.status })));
   const byId = new Map(rows.map((c) => [c.id, c]));
 

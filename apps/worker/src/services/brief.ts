@@ -83,9 +83,18 @@ export async function createBriefDraft(ctx: Ctx, input: Brief): Promise<Campaign
   return campaign;
 }
 
-/** Fire and forget wrapper with error capture. */
+/** Campaign ids with a generation running in this process. */
+const inFlight = new Set<string>();
+
+export function isGenerating(campaignId: string): boolean {
+  return inFlight.has(campaignId);
+}
+
+/** Fire and forget wrapper with error capture. A second call for a campaign already generating is ignored. */
 export function generateInBackground(ctx: Ctx, campaignId: string): void {
-  generateCampaign(ctx, campaignId).catch(async (e) => {
+  if (inFlight.has(campaignId)) return;
+  inFlight.add(campaignId);
+  generateCampaign(ctx, campaignId).finally(() => inFlight.delete(campaignId)).catch(async (e) => {
     const msg = (e as Error).message;
     console.error(`[brief] generation failed for ${campaignId}: ${msg}`);
     await ctx.db.from("campaigns").update({ status: "FAILED", generation_error: msg }).eq("id", campaignId);
@@ -121,7 +130,7 @@ export async function generateCampaign(ctx: Ctx, campaignId: string): Promise<Ca
   const recommended = toCents(strategy.recommended_daily_budget);
   let daily_budget_cents = Math.max(100, Math.min(evenDaily, recommended > 0 ? recommended : evenDaily, brand.daily_cap_cents));
   try {
-    await assertDailyCap(ctx.db, brand.id, brand.daily_cap_cents, { campaign_id: campaign.id, daily_budget_cents });
+    await assertDailyCap(ctx.db, brand.id, brand.daily_cap_cents, { campaign_id: campaign.id, daily_budget_cents }, ctx.dryRun);
   } catch (e) {
     const m = (e as Error).message.match(/Reduce by (\d+)/);
     if (m) daily_budget_cents = Math.max(100, daily_budget_cents - Number(m[1]));
@@ -263,18 +272,20 @@ export function ctaLabel(cta: string): string {
 
 /** Mark a creative as generating and return; the caller runs regenerateCreative in the background. */
 export async function startRegenerate(db: Db, campaignId: string, creativeId: string): Promise<Creative> {
-  const campaign = must(await db.from("campaigns").select("status").eq("id", campaignId).single(), "load campaign") as { status: string };
+  const campaign = must(await db.from("campaigns").select("status,strategy_json").eq("id", campaignId).single(), "load campaign") as { status: string; strategy_json: unknown };
   if (!["DRAFT", "PENDING_APPROVAL", "FAILED"].includes(campaign.status)) throw new Error(`Campaign ${campaign.status}: cannot regenerate`);
+  if (!campaign.strategy_json) throw new Error("Campaign has no strategy yet: retry generation first");
   return must(await db.from("creatives").update({ generating: true }).eq("id", creativeId).eq("campaign_id", campaignId).select("*").single(), "load creative") as Creative;
 }
 
 /** Regenerate copy or image for one creative. */
 export async function regenerateCreative(ctx: Ctx, campaignId: string, creativeId: string, part: "copy" | "image", actor: string): Promise<Creative> {
   const campaign = must(await ctx.db.from("campaigns").select("*").eq("id", campaignId).single(), "load campaign") as Campaign;
-  const brand = await brandByIdOrSlug(ctx.db, campaign.brand_id);
   const creative = must(await ctx.db.from("creatives").select("*").eq("id", creativeId).eq("campaign_id", campaignId).single(), "load creative") as Creative;
   const before = { ...creative };
   try {
+    if (!["DRAFT", "PENDING_APPROVAL", "FAILED"].includes(campaign.status)) throw new Error(`Campaign ${campaign.status}: cannot regenerate`);
+    const brand = await brandByIdOrSlug(ctx.db, campaign.brand_id);
     if (part === "copy") {
       const templateIds = (await listTemplates(env.TEMPLATES_DIR, brand.slug)).filter((t) => t !== "photo-overlay");
       const [landingText, perf] = await Promise.all([fetchLandingText(campaign.landing_url), creativePerformance(ctx.db, brand.id, campaign.objective).catch(() => ({ best: [], worst: [] }))]);

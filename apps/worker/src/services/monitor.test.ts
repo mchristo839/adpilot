@@ -99,13 +99,14 @@ const brand: Brand = {
 const campaign = { id: "c1", brand_id: "b1", meta_campaign_id: "m1", name: "Test", slug: "t", objective: "OUTCOME_TRAFFIC", status: "ACTIVE", daily_budget_cents: 1000 } as unknown as Campaign;
 const creative = { id: "cr1", campaign_id: "c1", adset_id: "s1", meta_ad_id: "ad1", status: "live", live_since: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" } as unknown as Creative;
 
-function fakeMeta(todaySpend: string) {
+function fakeMeta(todaySpend: string, last3?: { adset_id: string; spend: string }) {
   const fetchImpl = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
     let body: unknown = { data: [] };
     if (url.includes("/act_1?") || url.match(/\/act_1\?/)) body = { id: "act_1", spend_cap: "50000", amount_spent: "1000", currency: "AUD" };
     else if (url.includes("/insights") && url.includes("level=account") && url.includes("date_preset=yesterday")) body = { data: [{ account_id: "1", spend: "4.00", date_start: "2026-03-09", date_stop: "2026-03-09" }] };
     else if (url.includes("/insights") && url.includes("level=account")) body = { data: [{ account_id: "1", spend: todaySpend, date_start: "2026-03-10", date_stop: "2026-03-10" }] };
+    else if (last3 && url.includes("/insights") && url.includes("date_preset=last_3d")) body = { data: [{ ad_id: "ad1", adset_id: last3.adset_id, campaign_id: "m1", spend: last3.spend, impressions: "500", clicks: "0", date_start: "", date_stop: "" }] };
     else if (url.includes("/insights") && url.includes("date_preset=today")) body = { data: [{ ad_id: "ad1", adset_id: "sm1", campaign_id: "m1", spend: todaySpend, impressions: "10", clicks: "1", date_start: "", date_stop: "" }] };
     return new Response(JSON.stringify(body), { status: 200 });
   }) as unknown as typeof fetch;
@@ -118,7 +119,7 @@ function fakeMeta(todaySpend: string) {
 describe("monitor loop", () => {
   it("pauses a campaign whose spend today exceeds 1.5x daily budget within one run", async () => {
     const { runMonitor } = await import("./monitor.js");
-    const { db, writes } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [campaign as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
+    const { db, writes } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [{ ...creative } as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
     const { meta, setStatus } = fakeMeta("16.00"); // 1600 cents > 1.5 x 1000
     const results = await runMonitor({ db, meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
     const r = results[0]!;
@@ -135,10 +136,42 @@ describe("monitor loop", () => {
 
   it("leaves a campaign alone under budget", async () => {
     const { runMonitor } = await import("./monitor.js");
-    const { db } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [creative as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
+    const { db } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [{ ...creative } as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
     const { meta, setStatus } = fakeMeta("9.00");
     const results = await runMonitor({ db, meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
     expect(results[0]!.actions.filter((a) => a.action !== "notify")).toEqual([]);
     expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it("ignores campaigns launched during dry run once the worker is live", async () => {
+    const { runMonitor } = await import("./monitor.js");
+    const dryCampaign = { ...campaign, meta_campaign_id: "m1", dry_run: true };
+    const { db } = fakeDb({ brands: [brand as unknown as Record<string, unknown>], campaigns: [dryCampaign as unknown as Record<string, unknown>], creatives: [{ ...creative } as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], adsets: [], system_state: [] });
+    const { meta, setStatus } = fakeMeta("16.00");
+    const results = await runMonitor({ db, meta, ai: {} as never, dryRun: false }, new Date("2026-03-10T05:00:00Z"));
+    expect(results[0]!.actions.map((a) => a.rule)).not.toContain("runaway_guard");
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it("pauses a zero-result ad set once and leaves an already paused one alone", async () => {
+    const { runMonitor } = await import("./monitor.js");
+    const tables = () => ({ brands: [brand as unknown as Record<string, unknown>], campaigns: [{ ...campaign } as unknown as Record<string, unknown>], creatives: [{ ...creative } as unknown as Record<string, unknown>], spend_ledger: [], insights_snapshots: [], audit_log: [], system_state: [] });
+    // 5.00 spent, zero results, max CPA 1.50: over 3x, so the guard fires.
+    const first = fakeDb({ ...tables(), adsets: [{ id: "s1", campaign_id: "c1", meta_adset_id: "sm1", status: "ACTIVE" }] });
+    const m1 = fakeMeta("1.00", { adset_id: "sm1", spend: "5.00" });
+    await runMonitor({ db: first.db, meta: m1.meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
+    expect(m1.setStatus).toHaveBeenCalledWith("sm1", "PAUSED");
+
+    const second = fakeDb({ ...tables(), adsets: [{ id: "s1", campaign_id: "c1", meta_adset_id: "sm1", status: "paused_by_rule" }] });
+    const m2 = fakeMeta("1.00", { adset_id: "sm1", spend: "5.00" });
+    await runMonitor({ db: second.db, meta: m2.meta, ai: {} as never, dryRun: true }, new Date("2026-03-10T05:00:00Z"));
+    expect(m2.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not count dry-run campaigns against the daily cap once live", async () => {
+    const { assertDailyCap } = await import("./budget.js");
+    const { db } = fakeDb({ campaigns: [{ id: "old", brand_id: "b1", daily_budget_cents: 1000, status: "ACTIVE", dry_run: true }] });
+    await expect(assertDailyCap(db, "b1", 1000, { campaign_id: "new", daily_budget_cents: 1000 }, true)).rejects.toThrow(/daily cap/);
+    await expect(assertDailyCap(db, "b1", 1000, { campaign_id: "new", daily_budget_cents: 1000 }, false)).resolves.toBeUndefined();
   });
 });

@@ -26,6 +26,7 @@ export interface DailySummary {
 
 interface CreativeLine {
   creative_id: string | null;
+  campaign_id?: string | null;
   ad_id: string;
   headline: string | null;
   spend_cents: number;
@@ -76,8 +77,34 @@ async function summaryForBrand(ctx: Ctx, brand: Brand, now: Date): Promise<Daily
     });
   const ranked = lines.sort((a, b) => (a.cost_per_result_cents ?? Infinity) - (b.cost_per_result_cents ?? Infinity));
 
+  // Rule triggers for this brand only: audit rows name campaigns by our id, ad sets and ads by
+  // Meta id, account alerts by act id, brand-wide actions by brand id or "all".
+  const brandCampaigns = must(await db.from("campaigns").select("id,meta_campaign_id").eq("brand_id", brand.id), "brand campaigns") as { id: string; meta_campaign_id: string | null }[];
+  const campaignIds = brandCampaigns.map((c) => c.id);
+  const [brandAdsets, brandAds] = campaignIds.length
+    ? await Promise.all([
+        db.from("adsets").select("meta_adset_id").in("campaign_id", campaignIds),
+        db.from("creatives").select("meta_ad_id").in("campaign_id", campaignIds),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const entityIds = [
+    brand.id,
+    brand.ad_account_id,
+    "all",
+    ...campaignIds,
+    ...brandCampaigns.map((c) => c.meta_campaign_id),
+    ...((brandAdsets.data ?? []) as { meta_adset_id: string | null }[]).map((a) => a.meta_adset_id),
+    ...((brandAds.data ?? []) as { meta_ad_id: string | null }[]).map((a) => a.meta_ad_id),
+  ].filter((x): x is string => !!x);
   const triggers = must(
-    await db.from("audit_log").select("run_at,actor,action,entity_id,after_json").gte("run_at", new Date(now.getTime() - 86400000).toISOString()).in("action", ["pause", "notify", "kill_switch", "pause.untracked"]).order("run_at", { ascending: false }).limit(20),
+    await db
+      .from("audit_log")
+      .select("run_at,actor,action,entity_id,after_json")
+      .gte("run_at", new Date(now.getTime() - 86400000).toISOString())
+      .in("action", ["pause", "notify", "kill_switch", "pause.untracked"])
+      .in("entity_id", entityIds)
+      .order("run_at", { ascending: false })
+      .limit(20),
     "audit",
   ) as { run_at: string; actor: string; action: string; entity_id: string | null; after_json: { reason?: string } | null }[];
 
@@ -145,46 +172,54 @@ export interface OverviewBrand {
 export async function overview(ctx: Ctx, now = new Date()): Promise<{ brands: OverviewBrand[]; last_monitor_run_at: string | null; monitor_stale: boolean; dry_run: boolean }> {
   const { db } = ctx;
   const brands = must(await db.from("brands").select("*").order("name"), "brands") as Brand[];
-  const out: OverviewBrand[] = [];
-  for (const brand of brands) {
-    const today = localDate(now, brand.timezone);
-    const since = localDate(new Date(now.getTime() - 30 * 86400000), brand.timezone);
-    const monthStart = `${today.slice(0, 7)}-01`;
-    const ledger = must(await db.from("spend_ledger").select("date,spend_cents").eq("brand_id", brand.id).gte("date", since).lte("date", today).order("date"), "ledger") as { date: string; spend_cents: number }[];
-    const summary = await summaryForBrand(ctx, brand, now);
-    const campaigns = must(await db.from("campaigns").select("id").eq("brand_id", brand.id).eq("status", "ACTIVE"), "campaigns") as { id: string }[];
-    const snaps = must(
-      await db.from("insights_snapshots").select("ad_id,spend_cents,results,clicks,run_at").eq("brand_id", brand.id).eq("date_preset", "last_7d").gte("run_at", new Date(now.getTime() - 7 * 86400000).toISOString()).order("run_at", { ascending: false }).limit(2000),
-      "snapshots",
-    ) as { ad_id: string; spend_cents: number; results: number; clicks: number; run_at: string }[];
-    const latest = new Map<string, (typeof snaps)[number]>();
-    for (const s of snaps) if (!latest.has(s.ad_id)) latest.set(s.ad_id, s);
-    const adIds = [...latest.keys()];
-    const creatives = adIds.length ? (must(await db.from("creatives").select("id,meta_ad_id,headline").in("meta_ad_id", adIds), "creatives") as Pick<Creative, "id" | "meta_ad_id" | "headline">[]) : [];
-    const lines: CreativeLine[] = [...latest.values()]
-      .filter((s) => s.spend_cents > 0)
-      .map((s) => {
-        const c = creatives.find((x) => x.meta_ad_id === s.ad_id);
-        const denom = brand.default_objective === "OUTCOME_LEADS" ? s.results : s.clicks;
-        return { creative_id: c?.id ?? null, ad_id: s.ad_id, headline: c?.headline ?? null, spend_cents: s.spend_cents, results: denom, cost_per_result_cents: denom > 0 ? Math.round(s.spend_cents / denom) : null };
-      })
-      .sort((a, b) => (a.cost_per_result_cents ?? Infinity) - (b.cost_per_result_cents ?? Infinity));
-    out.push({
-      brand: brand.slug,
-      name: brand.name,
-      currency: brand.currency,
-      active: brand.active,
-      daily_cap_cents: brand.daily_cap_cents,
-      monthly_cap_cents: brand.monthly_cap_cents,
-      spend_mtd_cents: ledger.filter((r) => r.date >= monthStart).reduce((s, r) => s + r.spend_cents, 0),
-      spend_yesterday_cents: summary.spend_yesterday_cents,
-      active_daily_budget_cents: summary.active_daily_budget_cents,
-      ledger,
-      best: lines.slice(0, 5),
-      worst: lines.slice(-5).reverse(),
-      active_campaigns: campaigns.length,
-    });
-  }
+  const out: OverviewBrand[] = await Promise.all(
+    brands.map(async (brand) => {
+      const today = localDate(now, brand.timezone);
+      const yesterday = localDate(new Date(now.getTime() - 86400000), brand.timezone);
+      const since = localDate(new Date(now.getTime() - 30 * 86400000), brand.timezone);
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const [ledgerRes, campaignsRes, snapsRes] = await Promise.all([
+        db.from("spend_ledger").select("date,spend_cents").eq("brand_id", brand.id).gte("date", since).lte("date", today).order("date"),
+        db.from("campaigns").select("id,daily_budget_cents").eq("brand_id", brand.id).eq("status", "ACTIVE"),
+        db.from("insights_snapshots").select("ad_id,spend_cents,results,clicks,run_at").eq("brand_id", brand.id).eq("date_preset", "last_7d").gte("run_at", new Date(now.getTime() - 7 * 86400000).toISOString()).order("run_at", { ascending: false }).limit(2000),
+      ]);
+      const ledger = must(ledgerRes, "ledger") as { date: string; spend_cents: number }[];
+      const campaigns = must(campaignsRes, "campaigns") as { id: string; daily_budget_cents: number }[];
+      const snaps = must(snapsRes, "snapshots") as { ad_id: string; spend_cents: number; results: number; clicks: number; run_at: string }[];
+      const latest = new Map<string, (typeof snaps)[number]>();
+      for (const s of snaps) if (!latest.has(s.ad_id)) latest.set(s.ad_id, s);
+      const adIds = [...latest.keys()];
+      const creatives = adIds.length
+        ? (must(await db.from("creatives").select("id,meta_ad_id,headline,campaign_id").in("meta_ad_id", adIds), "creatives") as Pick<Creative, "id" | "meta_ad_id" | "headline" | "campaign_id">[])
+        : [];
+      const byAd = new Map(creatives.map((c) => [c.meta_ad_id, c]));
+      const lines: CreativeLine[] = [...latest.values()]
+        .filter((s) => s.spend_cents > 0)
+        .map((s) => {
+          const c = byAd.get(s.ad_id);
+          const denom = brand.default_objective === "OUTCOME_LEADS" ? s.results : s.clicks;
+          return { creative_id: c?.id ?? null, campaign_id: c?.campaign_id ?? null, ad_id: s.ad_id, headline: c?.headline ?? null, spend_cents: s.spend_cents, results: denom, cost_per_result_cents: denom > 0 ? Math.round(s.spend_cents / denom) : null };
+        })
+        .sort((a, b) => (a.cost_per_result_cents ?? Infinity) - (b.cost_per_result_cents ?? Infinity));
+      const best = lines.slice(0, 5);
+      return {
+        brand: brand.slug,
+        name: brand.name,
+        currency: brand.currency,
+        active: brand.active,
+        daily_cap_cents: brand.daily_cap_cents,
+        monthly_cap_cents: brand.monthly_cap_cents,
+        spend_mtd_cents: ledger.filter((r) => r.date >= monthStart).reduce((s, r) => s + r.spend_cents, 0),
+        spend_yesterday_cents: ledger.find((r) => r.date === yesterday)?.spend_cents ?? 0,
+        active_daily_budget_cents: campaigns.reduce((s, c) => s + c.daily_budget_cents, 0),
+        ledger,
+        best,
+        // Worst never repeats an ad already listed as best (small accounts have fewer than 10 ads).
+        worst: lines.slice(best.length).slice(-5).reverse(),
+        active_campaigns: campaigns.length,
+      };
+    }),
+  );
   const last = await getState<{ run_at: string }>(db, STATE_LAST_MONITOR);
   const lastRun = last?.value?.run_at ?? null;
   return { brands: out, last_monitor_run_at: lastRun, monitor_stale: !lastRun || now.getTime() - Date.parse(lastRun) > env.STALE_MONITOR_HOURS * 3600 * 1000, dry_run: ctx.dryRun };
