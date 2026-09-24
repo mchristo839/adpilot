@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="{{brand.google_fonts_url}}">
+<style>
+  html,body{margin:0;width:{{width}}px;height:{{height}}px;overflow:hidden}
+  body{position:relative;font-family:{{brand.font_body}};color:#fff}
+  img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.78) 100%)}
+  .text{position:absolute;left:72px;right:72px;bottom:88px}
+  h1{font-family:{{brand.font_heading}};font-size:84px;line-height:1.05;margin:0 0 20px}
+  .sub{font-size:38px;line-height:1.3;opacity:.95}
+  .brand{position:absolute;top:60px;left:72px;font-family:{{brand.font_heading}};font-weight:700;font-size:32px;text-transform:uppercase;letter-spacing:.05em;background:{{brand.colour.accent}};color:{{brand.colour.bg}};padding:10px 18px;border-radius:8px}
+</style>
+</head>
+<body>
+  <img src="{{photo}}" alt="">
+  <div class="shade"></div>
+  <div class="brand">{{brand.name}}</div>
+  <div class="text"><h1>{{headline}}</h1><div class="sub">{{sub}}</div></div>
+</body>
+</html>

@@ -1,0 +1,89 @@
+{
+  "name": "AdPilot Slack /adkill (optional)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adpilot-kill",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Slash command",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.ADPILOT_WORKER_URL }}/kill",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $vars.ADPILOT_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { brand: ($json.body.text || 'all').trim() } }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "name": "POST /kill",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response_type: 'in_channel', text: 'Kill switch: paused ' + $json.paused.length + ' campaigns in ' + $json.ms + 'ms' + ($json.failed.length ? ' (' + $json.failed.length + ' failed)' : '') } }}"
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Slash command": {
+      "main": [
+        [
+          {
+            "node": "POST /kill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /kill": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

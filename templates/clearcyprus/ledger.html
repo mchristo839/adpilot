@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600;700&display=swap">
+<style>
+  html,body{margin:0;width:{{width}}px;height:{{height}}px;overflow:hidden}
+  body{background:{{brand.colour.paper}};color:{{brand.colour.ink}};font-family:"IBM Plex Sans",sans-serif;padding:80px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between}
+  .head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:4px solid {{brand.colour.ink}};padding-bottom:20px}
+  .head .brand{font-weight:700;font-size:34px;letter-spacing:.02em}
+  .head .ref{font-family:"IBM Plex Mono",monospace;font-size:26px;opacity:.7}
+  h1{font-size:82px;line-height:1.06;margin:48px 0 0;font-weight:700;letter-spacing:-.01em}
+  .rows{margin-top:44px;font-family:"IBM Plex Mono",monospace;font-size:34px}
+  .row{display:flex;justify-content:space-between;padding:18px 0;border-bottom:2px solid rgba(16,28,26,.18)}
+  .row .v{font-weight:500;color:{{brand.colour.rust}}}
+  .foot{display:flex;justify-content:space-between;align-items:center}
+  .cta{background:{{brand.colour.yellow}};color:{{brand.colour.ink}};font-weight:700;font-size:34px;padding:20px 32px}
+  .site{font-family:"IBM Plex Mono",monospace;font-size:28px}
+</style>
+</head>
+<body>
+  <div>
+    <div class="head"><div class="brand">{{brand.name}}</div><div class="ref">{{ref}}</div></div>
+    <h1>{{headline}}</h1>
+    <div class="rows">
+      <div class="row"><span>{{row1_label}}</span><span class="v">{{row1_value}}</span></div>
+      <div class="row"><span>{{row2_label}}</span><span class="v">{{row2_value}}</span></div>
+      <div class="row"><span>{{row3_label}}</span><span class="v">{{row3_value}}</span></div>
+    </div>
+  </div>
+  <div class="foot"><div class="cta">{{cta}}</div><div class="site">clearcyprus.com</div></div>
+</body>
+</html>

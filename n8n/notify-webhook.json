@@ -1,0 +1,55 @@
+{
+  "name": "AdPilot notify fan-out (email)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adpilot-notify",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $vars.ADPILOT_EMAIL_FROM }}",
+        "toEmail": "={{ $vars.ADPILOT_EMAIL_TO }}",
+        "subject": "={{ ($json.body.severity === 'critical' ? 'URGENT ' : '') + '[AdPilot ' + $json.body.kind + '] ' + $json.body.title }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body.body + ($json.body.link ? '\\n\\nOpen: ' + $json.body.link : '') }}",
+        "options": {}
+      },
+      "name": "Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

@@ -1,0 +1,29 @@
+:root{--ink:#101c1a;--paper:#f4f4f1;--yellow:#f0c22b;--rust:#b4442a;--muted:#6b7280;--line:#dcdcd6}
+*{box-sizing:border-box}
+body{margin:0;font-family:"IBM Plex Sans",system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+a{color:inherit}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:2px solid var(--ink)}
+header nav a{margin-right:18px;font-weight:600;text-decoration:none}
+main{max-width:1100px;margin:0 auto;padding:24px}
+h1{font-size:28px;margin:0 0 16px}
+h2{font-size:20px;margin:24px 0 12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;background:#e5e7eb}
+.badge.ACTIVE,.badge.live,.badge.approved{background:#d1fae5}
+.badge.PENDING_APPROVAL,.badge.draft{background:#fef3c7}
+.badge.FAILED,.badge.rejected,.badge.paused_by_rule{background:#fee2e2}
+.badge.dry{background:var(--yellow);color:var(--ink)}
+button,.btn{font:inherit;padding:8px 14px;border:2px solid var(--ink);background:#fff;cursor:pointer;border-radius:4px}
+button.primary{background:var(--ink);color:#fff}
+button.danger{background:var(--rust);color:#fff;border-color:var(--rust)}
+button.small{padding:4px 8px;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.card{background:#fff;border:1px solid var(--line);border-radius:6px;padding:12px}
+.card img{width:100%;border-radius:4px;border:1px solid var(--line)}
+.muted{color:var(--muted);font-size:13px}
+form.stack label{display:block;margin:10px 0 4px;font-weight:600;font-size:13px}
+form.stack input,form.stack select,form.stack textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:4px;font:inherit}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.warn{background:#fff7db;border:1px solid var(--yellow);padding:10px;border-radius:4px;margin:12px 0}
+pre{white-space:pre-wrap;font-size:12px;background:#fff;padding:8px;border:1px solid var(--line)}
